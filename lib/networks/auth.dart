@@ -7,14 +7,14 @@ import 'package:flutter/material.dart';
 import 'package:heath_care/model/user.dart';
 import 'package:heath_care/repository/user_repository.dart';
 import 'package:heath_care/ui/home_screen.dart';
+import 'package:heath_care/ui/login_screen.dart';
 import 'package:heath_care/ui/main_screen.dart';
 import 'package:heath_care/utils/api.dart';
+import 'package:heath_care/utils/http_exception.dart';
 import 'package:heath_care/utils/navigation_util.dart';
 import 'package:http/http.dart' as http;
-import 'package:heath_care/utils/http_exception.dart';
 import 'package:intl/intl.dart';
 import 'package:oktoast/oktoast.dart';
-
 // ignore: import_of_legacy_library_into_null_safe
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -47,6 +47,11 @@ class Auth with ChangeNotifier {
     return tokenTmp != null && tokenTmp.isNotEmpty;
   }
 
+  Future<String> get role async {
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    return prefs.getString('role') ?? "";
+  }
+
   Future<String?> get token async {
     if (_token == null) {
       _token = await getToken();
@@ -69,21 +74,31 @@ class Auth with ChangeNotifier {
   }
 
   Future<void> logout() async {
-    _token = null;
-    _userEmail = null;
-    _userId = null;
-    _expiryDate = null;
+    try {
+      await userRepository.updateUserOnline(0);
+      _token = null;
+      _userEmail = null;
+      _userId = null;
+      _expiryDate = null;
 
-    if (_authTimer != null) {
-      _authTimer.cancel();
-      _authTimer = null;
+      if (_authTimer != null) {
+        _authTimer.cancel();
+        _authTimer = null;
+      }
+
+      notifyListeners();
+
+      final pref = await SharedPreferences.getInstance();
+      pref.clear();
+      DioCacheManager(CacheConfig(baseUrl: Api.authUrl)).clearAll();
+      NavigationUtil.pushReplacement(
+        MaterialPageRoute(
+          builder: (context) => LoginPage(),
+        ),
+      );
+    } catch (error) {
+      showToast('Đăng xuất lỗi');
     }
-
-    notifyListeners();
-
-    final pref = await SharedPreferences.getInstance();
-    pref.clear();
-    DioCacheManager(CacheConfig(baseUrl: Api.authUrl)).clearAll();
   }
 
   void _autologout() {
@@ -156,22 +171,8 @@ class Auth with ChangeNotifier {
       // final format = new DateFormat('ss');
       // print(exDate);
 
-      String role = responseData['data']['roles'][0];
-      if (role == 'admin') {
-        NavigationUtil.pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => MainScreen(),
-          ),
-        );
-      } else if (role == 'Quản lý') {
-        NavigationUtil.pushReplacement(
-          MaterialPageRoute(
-            builder: (context) => HomeScreen(),
-          ),
-        );
-      } else {
-        showToast('Đăng nhập lỗi');
-      }
+      await userRepository.updateUserOnline(1);
+
       User user = await userRepository.getCurrentUser(tokenTmp: _token);
       setCurrentUser(user);
       _expiryDate = DateTime.now().add(Duration(seconds: 600));
@@ -189,8 +190,28 @@ class Auth with ChangeNotifier {
       prefs.setString('userData', userData);
       setToken(_token);
       setExpiryDate(_expiryDate.toString());
+
+      String role = responseData['data']['roles'][0];
+      prefs.setString('role', role);
+
+      if (role == 'admin') {
+        NavigationUtil.pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => MainScreen(),
+          ),
+        );
+      } else if (role == 'Quản lý') {
+        NavigationUtil.pushReplacement(
+          MaterialPageRoute(
+            builder: (context) => HomeScreen(),
+          ),
+        );
+      } else {
+        showToast('Đăng nhập lỗi');
+      }
     } catch (e) {
       print(e.toString());
+      showToast('Đăng nhập lỗi');
       throw e;
     }
   }
